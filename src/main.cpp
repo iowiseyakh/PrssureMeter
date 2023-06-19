@@ -1,17 +1,16 @@
 #include <Arduino.h>
-#include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
-#include <Fonts/FreeSansBold18pt7b.h>
+#include <Fonts/FreeSansBold24pt7b.h>
 #include <Fonts/FreeSansBold9pt7b.h>
-#include <Adafruit_Sensor.h>
-#include <Adafruit_BME280.h>
+#include <MedianTemplate.h>
 
 #define SCREEN_WIDTH 128    // OLED display width, in pixels
 #define SCREEN_HEIGHT 64    // OLED display height, in pixels
 #define OLED_RESET -1       // Reset pin # (or -1 if sharing Arduino reset pin)
 #define SCREEN_ADDRESS 0x3C ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+MedianFilter<float, 7> filter;
 
 enum ExpResult
 {
@@ -22,7 +21,6 @@ enum ExpResult
   ExpFail
 } expRes = ExpStart;
 
-Adafruit_BME280 bme; // I2C
 
 ////////////////////////////////////////////////////////////////////////////////////
 void drawValue(float value)
@@ -33,12 +31,12 @@ void drawValue(float value)
   // return;
 
   display.clearDisplay();
-  display.setFont(&FreeSansBold18pt7b);
+  display.setFont(&FreeSansBold24pt7b);
   display.setCursor(0, 40);
   display.print(value, 3);
   display.setFont(&FreeSansBold9pt7b);
   display.setCursor(0, 60);
-  display.print("kPa");
+  display.print("at");
   display.setCursor(50, 60);
 
   switch (expRes)
@@ -67,15 +65,6 @@ void setup()
 {
   Serial.begin(115200);
 
-  if (!bme.begin(0x77))
-  {
-    Serial.println("Could not find a valid BME280 sensor, check wiring, address 0x78, sensor ID!");
-    Serial.print("SensorID was: 0x");
-    Serial.println(bme.sensorID(), 16);
-    while (1)
-      delay(10);
-  }
-
   // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
   if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS))
   {
@@ -90,18 +79,19 @@ void setup()
   digitalWrite(beepPin, 0);
 
   pinMode(12, INPUT_PULLUP);
-
-  // readData(&calibData);
-  // Serial.println("Calib: " + String(calibData.getTemp()) + "    " + String(calibData.getBridge()));
 }
 
 ////////////////////////////////////////////////////////////////////////////////////
 void loop()
 {
-  float P = bme.readPressure() / 1000.0F - 100.0 + 0.015;
+  float U = analogRead(A3) * 5.0 / 1024.0;
+  //                    PSI       range    PSI to kPa   Pa to kPa
+  //float P = (U - 0.5) * 100.0 / (4.5 - 0.5) * 6894.76 / 1000.0;
+  float P = (U - 0.5) * 100.0 / (4.5 - 0.5) * 0.070307; // to atm
+  P = filter.putGet(P);
   static float lowP;
 
-  Serial.println("P = " + String(P, 3) + " kPa");
+  Serial.println("P = " + String(P, 3) + " at");
 
   drawValue(P);
 
@@ -111,7 +101,7 @@ void loop()
     if (expRes == ExpPump) // Если в предыдущий раз кран был открыт,
     {
       expRes = ExpRun;                    // значит запускаем эксперимент
-      lowP = P - 1.0;                     // Запоминаем давление, при котором тест будет считаться проваленным
+      lowP = P - 0.1;                     // Запоминаем давление, при котором тест будет считаться проваленным
       experimentEndAt = millis() + 60000; // Определяем время, когда эксперимент завершится
     }
     if (expRes == ExpRun) // Эаксперимент уже запущен
